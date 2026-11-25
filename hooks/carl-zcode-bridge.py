@@ -60,7 +60,14 @@ def main() -> int:
     except json.JSONDecodeError:
         ctx = out
     if ctx:
-        print(ctx)
+        # Same envelope the other ZCode SessionStart hooks emit (rtk's session-start.mjs):
+        # ZCode lifts additionalContext into the session-start context.
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": ctx,
+            }
+        }))
     return 0
 
 
