@@ -107,6 +107,31 @@ The installer prompts you to choose:
 npx carl-core@latest
 ```
 
+### ZCode Support
+
+ZCode has no `UserPromptSubmit` hook event, so CARL's per-prompt injection cannot run there.
+The `--zcode` flag wires a SessionStart bridge instead: the full `<carl-rules>` block is
+injected once per session start, from the same `.carl/carl.json` store.
+
+```bash
+npx carl-core --global --zcode
+```
+
+What this changes:
+
+- Installs `hooks/carl-zcode-bridge.py` next to the main hook (both in `~/.claude/hooks/`).
+- Registers it in `~/.zcode/cli/config.json` under `hooks.events.SessionStart`.
+
+Trade-offs to know:
+
+- **Once per session, not per prompt.** Mid-session rule edits (or new domain decisions) take
+  effect on the next session restart, or immediately via the `carl_v2_*` MCP tools.
+- **Context bracket is pinned to FRESH at start.** ZCode does not report context usage to
+  hooks, so the bracket-aware injections (MODERATE/DEPLETED) cannot fire.
+- **Per-project scopes still work.** The bridge passes the launched project's `cwd`, so a
+  repo with its own `.carl/carl.json` gets that project's domains merged, exactly as on
+  Claude Code.
+
 ---
 
 ## How It Works

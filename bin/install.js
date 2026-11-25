@@ -42,6 +42,7 @@ const args = process.argv.slice(2);
 const hasGlobal = args.includes('--global') || args.includes('-g');
 const hasLocal = args.includes('--local') || args.includes('-l');
 const hasHelp = args.includes('--help') || args.includes('-h');
+const hasZcode = args.includes('--zcode');
 const skipClaudeMd = args.includes('--skip-claude-md');
 
 // Parse --config-dir argument
@@ -73,6 +74,7 @@ if (hasHelp) {
     ${amber}-g, --global${reset}              Install globally (to ~/.claude and ~/.carl)
     ${amber}-l, --local${reset}               Install locally (to ./.claude and ./.carl)
     ${amber}-c, --config-dir <path>${reset}   Specify custom Claude config directory
+    ${amber}--zcode${reset}                   Also wire CARL into ZCode (~/.zcode/cli/config.json)
     ${amber}--skip-claude-md${reset}          Don't modify CLAUDE.md
     ${amber}-h, --help${reset}                Show this help message
 
@@ -86,13 +88,21 @@ if (hasHelp) {
     ${dim}# Install to current project only${reset}
     npx carl-core --local
 
+    ${dim}# Global install that also injects into ZCode sessions${reset}
+    npx carl-core --global --zcode
+
   ${yellow}What gets installed:${reset}
     hooks/carl-hook.py     - Rule injection hook (v2, JSON-based)
+    hooks/carl-zcode-bridge.py - ZCode SessionStart bridge (with --zcode)
     .carl/carl.json        - Domain rules, decisions, config
     .carl/carl-mcp/        - MCP server for runtime management
     settings.json          - Hook registration (merged)
     .mcp.json              - MCP server registration
     CLAUDE.md              - CARL integration block (optional)
+
+  ${yellow}ZCode note:${reset}
+    ZCode has no UserPromptSubmit hook event, so rules are injected once per session start
+    (not per prompt). Mid-session rule edits need a session restart, or the carl-mcp tools.
 
   ${yellow}v1 Migration:${reset}
     If upgrading from v1 (flat-file manifest), run:
@@ -263,6 +273,60 @@ function addCarlBlock(claudeMdPath) {
 }
 
 /**
+ * Wire CARL into ZCode's SessionStart (hooks/carl-zcode-bridge.py).
+ * ZCode has no UserPromptSubmit event, so the Claude Code per-prompt hook cannot run there;
+ * the bridge emits the full <carl-rules> block once at session start instead.
+ */
+function wireZcode(hooksDir) {
+  const zcodeConfigPath = path.join(os.homedir(), '.zcode', 'cli', 'config.json');
+  if (!fs.existsSync(path.dirname(zcodeConfigPath))) {
+    console.log(`  ${yellow}ZCode not found (${zcodeConfigPath}), skipping --zcode${reset}`);
+    return;
+  }
+
+  let config = {};
+  try {
+    config = JSON.parse(fs.readFileSync(zcodeConfigPath, 'utf8'));
+  } catch (e) {
+    console.log(`  ${yellow}Warning: could not parse ${zcodeConfigPath}: ${e.message}${reset}`);
+    return;
+  }
+
+  const events = config.hooks && config.hooks.events
+    ? config.hooks.events
+    : (config.hooks = config.hooks || {}, config.hooks.events = {}, config.hooks.events);
+  if (!Array.isArray(events.SessionStart)) {
+    events.SessionStart = [];
+  }
+
+  const normalizedHooksDir = hooksDir.replace(/\\/g, '/');
+  const entry = {
+    hooks: [
+      {
+        type: 'process',
+        command: 'python',
+        args: ['-X', 'utf8', `${normalizedHooksDir}/carl-zcode-bridge.py`]
+      }
+    ]
+  };
+
+  const already = JSON.stringify(events.SessionStart).includes('carl-zcode-bridge');
+  if (already) {
+    // Replace in place so an updated bridge path takes effect.
+    for (const e of events.SessionStart) {
+      if (e.hooks && e.hooks.some(h => JSON.stringify(h).includes('carl-zcode-bridge'))) {
+        e.hooks = entry.hooks;
+      }
+    }
+    console.log(`  ${green}✓${reset} Updated CARL bridge in ZCode config`);
+  } else {
+    events.SessionStart.push(entry);
+    console.log(`  ${green}✓${reset} Wired CARL bridge into ZCode SessionStart`);
+  }
+
+  fs.writeFileSync(zcodeConfigPath, JSON.stringify(config, null, 2));
+}
+/**
  * Install MCP server
  */
 function installMcp(carlDir, src) {
@@ -328,6 +392,15 @@ function install(isGlobal, addToClaudeMd = true) {
   fs.chmodSync(hookDest, '755');
   console.log(`  ${green}✓${reset} Installed hooks/carl-hook.py (v2)`);
 
+  // 1b. Copy the ZCode bridge (shipped next to the hook; wireZcode references it there).
+  const bridgeSrc = path.join(src, 'hooks', 'carl-zcode-bridge.py');
+  const bridgeDest = path.join(hooksDir, 'carl-zcode-bridge.py');
+  if (fs.existsSync(bridgeSrc)) {
+    fs.copyFileSync(bridgeSrc, bridgeDest);
+    fs.chmodSync(bridgeDest, '755');
+    console.log(`  ${green}✓${reset} Installed hooks/carl-zcode-bridge.py`);
+  }
+
   // 2. Copy .carl-template to .carl (carl.json + sessions/)
   const carlTemplateSrc = path.join(src, '.carl-template');
   if (!fs.existsSync(carlDir)) {
@@ -360,6 +433,11 @@ function install(isGlobal, addToClaudeMd = true) {
 
   // 4. Wire hook into settings.json
   wireHook(claudeDir, hookDest);
+
+  // 4b. Wire the ZCode bridge when requested.
+  if (hasZcode) {
+    wireZcode(hooksDir);
+  }
 
   // 5. Wire MCP into .mcp.json (at workspace root, not settings.json)
   if (mcpIndexPath) {

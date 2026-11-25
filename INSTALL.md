@@ -20,7 +20,17 @@ The installer will:
 npx carl-core --global       # Install to ~/.claude and ~/.carl
 npx carl-core --local        # Install to ./.claude and ./.carl
 npx carl-core --skip-claude-md  # Don't modify CLAUDE.md
+npx carl-core --global --zcode  # Also inject CARL into ZCode sessions
 ```
+
+### ZCode
+
+ZCode has no `UserPromptSubmit` hook event, so CARL injects rules once per **session start**
+there instead of per prompt. `--zcode` installs `hooks/carl-zcode-bridge.py` next to the main
+hook and registers it in `~/.zcode/cli/config.json` under `hooks.events.SessionStart`.
+The rules come from the same `.carl/carl.json`; per-project scopes work (the bridge passes the
+launched project's `cwd`). Mid-session rule edits need a session restart, or the `carl_v2_*`
+MCP tools. See README "ZCode Support" for the full trade-off list.
 
 ### Staying Updated
 

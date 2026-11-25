@@ -1,7 +1,7 @@
 {
   "name": "carl-core",
   "version": "2.0.2",
-  "description": "Context Augmentation & Reinforcement Layer - Dynamic rules for Claude Code",
+  "description": "Context Augmentation & Reinforcement Layer - Dynamic rules for Claude Code and ZCode",
   "bin": {
     "carl-core": "bin/install.js"
   },
@@ -15,6 +15,7 @@
   "keywords": [
     "claude",
     "claude-code",
+    "zcode",
     "ai",
     "rules",
     "context",
